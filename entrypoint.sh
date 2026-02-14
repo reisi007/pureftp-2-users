@@ -10,13 +10,15 @@ if [ ! -f /etc/ssl/private/pure-ftpd.pem ]; then
     chmod 600 /etc/ssl/private/pure-ftpd.pem
 fi
 
-# --- 2. System-User Setup ---
-# Check if group/user already exists to avoid errors on restart
-getent group ftpgroup >/dev/null || addgroup -g 1000 ftpgroup
-getent passwd ftpuser >/dev/null || adduser -D -G ftpgroup -h /home/ftpusers -u 1000 ftpuser
+# --- 2. System Group Setup ---
+# Ensure GID 82 exists (usually www-data)
+getent group 82 >/dev/null || addgroup -g 82 ftpgroup
+FTP_GROUP_NAME=$(getent group 82 | cut -d: -f1)
+
+# Initialize UID counter
+CURRENT_UID=1000
 
 # --- 3. Pure-FTPd Database Setup ---
-# Ensure the config directory and file exist
 mkdir -p /etc/pure-ftpd
 touch /etc/pure-ftpd/passwd
 
@@ -24,12 +26,33 @@ create_virtual_user() {
     local USER=$1
     local PASS=$2
     local HOME=$3
+    
     if [ -n "$USER" ] && [ -n "$PASS" ]; then
-        echo "Creating virtual user: $USER"
+        # Check if the UID is already taken by an existing system user
+        while getent passwd "$CURRENT_UID" >/dev/null; do
+            CURRENT_UID=$((CURRENT_UID + 1))
+        done
+
+        echo "Creating virtual user '$USER' mapped to system UID $CURRENT_UID..."
+        
+        # 1. Create a system-level user for this specific FTP user
+        # We use 'ftp_$USER' to avoid naming conflicts
+        adduser -D -G "$FTP_GROUP_NAME" -h "$HOME" -u "$CURRENT_UID" "ftp_$USER"
+        
+        # 2. Set directory permissions
         mkdir -p "$HOME"
-        chown -R ftpuser:ftpgroup "$HOME"
-        # -f specifies the file, -m commits to pdb immediately
-        (echo "$PASS"; echo "$PASS") | pure-pw useradd "$USER" -f /etc/pure-ftpd/passwd -u ftpuser -d "$HOME"
+        chown -R "$CURRENT_UID:82" "$HOME"
+        
+        # 3. Add to Pure-FTPd database
+        # -u specifies the specific UID, -g specifies the shared GID 82
+        (echo "$PASS"; echo "$PASS") | pure-pw useradd "$USER" \
+            -f /etc/pure-ftpd/passwd \
+            -u "$CURRENT_UID" \
+            -g 82 \
+            -d "$HOME"
+            
+        # Increment for the next call
+        CURRENT_UID=$((CURRENT_UID + 1))
     fi
 }
 
