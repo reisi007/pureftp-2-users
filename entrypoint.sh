@@ -10,36 +10,47 @@ if [ ! -f /etc/ssl/private/pure-ftpd.pem ]; then
     chmod 600 /etc/ssl/private/pure-ftpd.pem
 fi
 
-# --- 2. User Creation ---
+# --- 2. Base User/Group Setup ---
 addgroup -g 1000 ftpgroup
 adduser -D -G ftpgroup -h /home/ftpusers -u 1000 ftpuser
 
-create_user() {
+# Helper function to create a Pure-FTPd user
+create_virtual_user() {
     local USER=$1
     local PASS=$2
+    local HOME=$3
+
     if [ -n "$USER" ] && [ -n "$PASS" ]; then
-        echo "Creating user: $USER"
-        mkdir -p /home/ftpusers/$USER
-        chown -R ftpuser:ftpgroup /home/ftpusers/$USER
-        (echo "$PASS"; echo "$PASS") | pure-pw useradd $USER -u ftpuser -d /home/ftpusers/$USER -f /etc/pure-ftpd/passwd
+        echo "Creating virtual user: $USER at $HOME"
+        mkdir -p "$HOME"
+        chown -R ftpuser:ftpgroup "$HOME"
+        (echo "$PASS"; echo "$PASS") | pure-pw useradd $USER -u ftpuser -d "$HOME" -f /etc/pure-ftpd/passwd
     fi
 }
 
-create_user "$FTP_USER1" "$FTP_PASS1"
-create_user "$FTP_USER2" "$FTP_PASS2"
+# --- 3. Strict Logic for Nested Directories ---
 
+# User 1: Primary Home
+USER1_HOME="/home/ftpusers/$FTP_USER1"
+
+# User 2: Validation (No Fallback)
+if [ -z "$FTP_USER2_DIR" ]; then
+    echo "ERROR: FTP_USER2_DIR is not set. Setup failed."
+    exit 1
+fi
+
+USER2_HOME="$USER1_HOME/$FTP_USER2_DIR"
+
+# --- 4. Execute Creation ---
+create_virtual_user "$FTP_USER1" "$FTP_PASS1" "$USER1_HOME"
+create_virtual_user "$FTP_USER2" "$FTP_PASS2" "$USER2_HOME"
+
+# Commit changes
 pure-pw mkdb /etc/pure-ftpd/pureftpd.pdb -f /etc/pure-ftpd/passwd
 
-# --- 3. Start Pure-FTPd ---
-echo "Starting Pure-FTPd with External IP: $EXTERNAL_IP"
-
-# -p 30000:30500 : Sets the new, larger passive port range
+# --- 5. Start Pure-FTPd ---
+echo "Starting Pure-FTPd..."
 exec /usr/sbin/pure-ftpd \
     -l puredb:/etc/pure-ftpd/pureftpd.pdb \
-    -E \
-    -j \
-    -R \
-    -P "$EXTERNAL_IP" \
-    -p 30000:30500 \
-    -C 129 \
-    -Y 2
+    -E -j -R -P "$EXTERNAL_IP" \
+    -p 30000:30500 -C 129 -Y 2
