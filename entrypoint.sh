@@ -75,7 +75,7 @@ pure-pw mkdb /etc/pure-ftpd/pureftpd.pdb -f /etc/pure-ftpd/passwd
 echo "Starting Pure-FTPd on $EXTERNAL_IP..."
 exec /usr/sbin/pure-ftpd \
     -l puredb:/etc/pure-ftpd/pureftpd.pdb \
-    -E -j -R \
+    -E -j \
     -P "$EXTERNAL_IP" \
     -p 30000:30500 \
     -C 129 \
