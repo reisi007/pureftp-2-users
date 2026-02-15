@@ -4,7 +4,6 @@ FROM alpine:latest
 RUN apk --no-cache add \
     proftpd \
     proftpd-utils \
-    proftpd-mod-crypto \
     openssl
 
 # Create necessary directories
