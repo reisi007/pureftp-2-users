@@ -96,6 +96,4 @@ exec /usr/sbin/pure-ftpd \
     -P "$EXTERNAL_IP" \
     -p 30000:30500 \
     -C 129 \
-    -Y 2 \
-    --fscharset=utf-8 \
-    --clientcharset=utf-8
+    -Y 2

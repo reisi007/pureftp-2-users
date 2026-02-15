@@ -11,8 +11,6 @@ RUN mkdir -p /etc/ssl/private /etc/pure-ftpd /home/ftpusers /config
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-ENV LANG=C.UTF-8
-
 # Expose FTP Control port and Passive Data ports
 EXPOSE 21 30000-30500
 
