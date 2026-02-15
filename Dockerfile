@@ -1,22 +1,17 @@
 FROM alpine:latest
 
-# Install ProFTPD, Utils (for ftpasswd), Crypto (for SSL), and OpenSSL
-RUN apk --no-cache add \
-    proftpd \
-    proftpd-utils \
-    proftpd-mod-crypto \
-    openssl
+# [cite_start]Install pure-ftpd and openssl [cite: 1]
+RUN apk --no-cache add pure-ftpd openssl
 
 # Create necessary directories
-# /config matches the volume mount in your compose file
-RUN mkdir -p /run/proftpd /etc/ssl/private /home/ftpusers /config
+# We add /config for persistent storage
+RUN mkdir -p /etc/ssl/private /etc/pure-ftpd /home/ftpusers /config
 
-# Copy configuration and entrypoint
-COPY proftpd.conf /etc/proftpd/proftpd.conf
+# Copy the entrypoint script
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Expose FTP Control port and Passive Data ports (same as before)
+# Expose FTP Control port and Passive Data ports
 EXPOSE 21 30000-30500
 
 # Declare the mount point for external config
