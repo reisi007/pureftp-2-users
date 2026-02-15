@@ -5,33 +5,21 @@ CERT_DIR="/config"
 CERT_FILE="$CERT_DIR/pure-ftpd.pem"
 TARGET_FILE="/etc/ssl/private/pure-ftpd.pem"
 
-# Ensure the config directory exists
 mkdir -p "$CERT_DIR"
-
 if [ ! -f "$CERT_FILE" ]; then
-    echo "Generating SSL certificate in $CERT_DIR..."
+    echo "Generating SSL certificate..."
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-        -keyout "$CERT_FILE" \
-        -out "$CERT_FILE" \
+        -keyout "$CERT_FILE" -out "$CERT_FILE" \
         -subj "/C=US/ST=DE/L=Berlin/O=FTP/CN=ftpserver"
     chmod 600 "$CERT_FILE"
-else
-    echo "Found existing SSL certificate in $CERT_DIR. Reusing..."
 fi
-
-# Symlink the persistent cert to the location Pure-FTPd expects
 ln -sf "$CERT_FILE" "$TARGET_FILE"
 
-
-# --- 2. System Group Setup ---
-# Ensure GID 82 exists (usually www-data)
+# --- 2. System Setup ---
 getent group 82 >/dev/null || addgroup -g 82 ftpgroup
 FTP_GROUP_NAME=$(getent group 82 | cut -d: -f1)
-
-# Initialize UID counter
 CURRENT_UID=1000
 
-# --- 3. Pure-FTPd Database Setup ---
 mkdir -p /etc/pure-ftpd
 touch /etc/pure-ftpd/passwd
 
@@ -40,48 +28,68 @@ create_virtual_user() {
     local PASS=$2
     local HOME=$3
     
-    if [ -n "$USER" ] && [ -n "$PASS" ]; then
-        # Check if the UID is already taken by an existing system user
-        while getent passwd "$CURRENT_UID" >/dev/null; do
-            CURRENT_UID=$((CURRENT_UID + 1))
-        done
-
-        echo "Creating virtual user '$USER' mapped to system UID $CURRENT_UID..."
-        
-        # 1. Create a system-level user for this specific FTP user
-        adduser -D -G "$FTP_GROUP_NAME" -h "$HOME" -u "$CURRENT_UID" "ftp_$USER"
-        
-        # 2. Set directory permissions
-        mkdir -p "$HOME"
-        chown -R "$CURRENT_UID:82" "$HOME"
-        
-        # 3. Add to Pure-FTPd database
-        (echo "$PASS"; echo "$PASS") | pure-pw useradd "$USER" \
-            -f /etc/pure-ftpd/passwd \
-            -u "$CURRENT_UID" \
-            -g 82 \
-            -d "$HOME"
-            
-        # Increment for the next call
+    # Check for UID conflicts
+    while getent passwd "$CURRENT_UID" >/dev/null; do
         CURRENT_UID=$((CURRENT_UID + 1))
-    fi
+    done
+
+    echo "Creating user '$USER' (UID $CURRENT_UID) -> $HOME"
+    
+    adduser -D -G "$FTP_GROUP_NAME" -h "$HOME" -u "$CURRENT_UID" "ftp_$USER"
+    mkdir -p "$HOME"
+    chown -R "$CURRENT_UID:82" "$HOME"
+    
+    (echo "$PASS"; echo "$PASS") | pure-pw useradd "$USER" \
+        -f /etc/pure-ftpd/passwd \
+        -u "$CURRENT_UID" -g 82 \
+        -d "$HOME"
+        
+    CURRENT_UID=$((CURRENT_UID + 1))
 }
 
-# Create User 1
-USER1_HOME="/home/ftpusers/$FTP_USER1"
-create_virtual_user "$FTP_USER1" "$FTP_PASS1" "$USER1_HOME"
+# --- 3. Dynamic User Creation Loop ---
+# We loop through index i=1, 2, 3... looking for FTP_USER_i
+i=1
+while true; do
+    # Construct variable names dynamically
+    # Note: We use _ (underscore) as separator: FTP_USER_1, FTP_PASS_1
+    user_var="FTP_USER_$i"
+    pass_var="FTP_PASS_$i"
+    home_var="FTP_HOME_$i"
 
-# Create User 2
-if [ -n "$FTP_USER2" ] && [ -n "$FTP_USER2_DIR" ]; then
-    USER2_HOME="$USER1_HOME/$FTP_USER2_DIR"
-    create_virtual_user "$FTP_USER2" "$FTP_PASS2" "$USER2_HOME"
-fi
+    # Use eval to pull the value of the variable name
+    eval USER_VAL=\$$user_var
+    eval PASS_VAL=\$$pass_var
+    eval HOME_VAL=\$$home_var
 
-# Finalize the DB
+    # Stop if the user variable is empty
+    if [ -z "$USER_VAL" ]; then
+        # Check if we just haven't started yet, or if we are done
+        if [ "$i" -eq 1 ]; then
+            echo "WARNING: No FTP_USER_1 defined. No users created."
+        fi
+        break
+    fi
+
+    # Default home directory if not provided
+    if [ -z "$HOME_VAL" ]; then
+        HOME_VAL="/home/ftpusers/$USER_VAL"
+    fi
+
+    # Create the user
+    if [ -n "$PASS_VAL" ]; then
+        create_virtual_user "$USER_VAL" "$PASS_VAL" "$HOME_VAL"
+    else
+        echo "Skipping $USER_VAL: Password not set."
+    fi
+
+    i=$((i + 1))
+done
+
 pure-pw mkdb /etc/pure-ftpd/pureftpd.pdb -f /etc/pure-ftpd/passwd
 
 # --- 4. Start ---
-echo "Starting Pure-FTPd on $EXTERNAL_IP..."
+echo "Starting Pure-FTPd..."
 exec /usr/sbin/pure-ftpd \
     -l puredb:/etc/pure-ftpd/pureftpd.pdb \
     -E -j \
